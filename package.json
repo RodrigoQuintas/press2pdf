@@ -1,0 +1,20 @@
+{
+  "name": "press2pdf",
+  "version": "1.0.0",
+  "description": "Gerador de PDF a partir de URLs de notícias",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "server"
+  ],
+  "scripts": {
+    "install:all": "npm install && npm install --workspace frontend && npm install --workspace server",
+    "playwright:install": "npm run playwright:install --workspace server",
+    "start": "concurrently \"npm run dev --workspace frontend\" \"npm run start --workspace server\"",
+    "dev": "npm run start",
+    "build": "npm run build --workspace frontend"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
