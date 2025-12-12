@@ -43,12 +43,10 @@ function createPDFTemplate(article) {
       line-height: 1.8;
       color: #333;
       background: #fff;
-      padding: 40px;
-      max-width: 800px;
-      margin: 0 auto;
+      padding: 20px 40px;
     }
     
-    header {
+    .article-header {
       margin-bottom: 40px;
       padding-bottom: 20px;
       border-bottom: 3px solid #2563eb;
@@ -145,7 +143,7 @@ function createPDFTemplate(article) {
       border-bottom-color: #2563eb;
     }
     
-    footer {
+    .article-footer {
       margin-top: 60px;
       padding-top: 30px;
       border-top: 2px solid #e2e8f0;
@@ -168,25 +166,21 @@ function createPDFTemplate(article) {
   </style>
 </head>
 <body>
-  <header>
-    <h1>${article.title}</h1>
-    ${article.byline ? `<p class="byline">Por ${article.byline}</p>` : ''}
-    <div class="metadata">
-      <span>📅 Gerado em ${new Date().toLocaleDateString('pt-BR')}</span>
-      <span>⏱️ ${article.length ? Math.ceil(article.length / 1000) + ' min de leitura' : ''}</span>
-    </div>
-  </header>
-  
-  ${article.excerpt ? `<div class="excerpt">${article.excerpt}</div>` : ''}
-  
-  <article>
-    ${article.content}
-  </article>
-  
-  <footer>
-    <p><strong>Fonte original:</strong></p>
-    <a href="${article.siteName || 'Fonte'}" class="source-link">${article.siteName || 'Link da notícia'}</a>
-  </footer>
+    <header class="article-header">
+      <h1>${article.title}</h1>
+      ${article.byline ? `<p class="byline">Por ${article.byline}</p>` : ''}
+    </header>
+    
+    ${article.excerpt ? `<div class="excerpt">${article.excerpt}</div>` : ''}
+    
+    <article>
+      ${article.content}
+    </article>
+    
+    <footer class="article-footer">
+      <p><strong>Fonte original:</strong></p>
+      <a href="${article.siteName || 'Fonte'}" class="source-link">${article.siteName || 'Link da notícia'}</a>
+    </footer>
 </body>
 </html>
   `.trim();
@@ -194,13 +188,34 @@ function createPDFTemplate(article) {
 
 // Endpoint para gerar PDF
 app.post('/generate-pdf', async (req, res) => {
-  const { url } = req.body;
+  const { url, customerPath } = req.body;
 
   if (!url) {
     return res.status(400).json({ error: 'URL é obrigatória' });
   }
 
   try {
+    // Carregar imagens do cliente, se fornecido
+    let headerImage = null;
+    let footerImage = null;
+    
+    if (customerPath) {
+      try {
+        const headerPath = path.join(__dirname, '../frontend/public', customerPath, 'header.png');
+        const footerPath = path.join(__dirname, '../frontend/public', customerPath, 'footer.png');
+        
+        const headerBuffer = await fs.readFile(headerPath);
+        const footerBuffer = await fs.readFile(footerPath);
+        
+        headerImage = `data:image/png;base64,${headerBuffer.toString('base64')}`;
+        footerImage = `data:image/png;base64,${footerBuffer.toString('base64')}`;
+        
+        console.log('Imagens do cliente carregadas:', customerPath);
+      } catch (error) {
+        console.error('Erro ao carregar imagens do cliente:', error.message);
+      }
+    }
+    
     // 1. Baixar o HTML da página
     console.log(`Baixando página: ${url}`);
     const response = await axios.get(url, {
@@ -237,17 +252,28 @@ app.post('/generate-pdf', async (req, res) => {
       waitUntil: 'networkidle' 
     });
 
-    const pdfBuffer = await page.pdf({
+    const pdfOptions = {
       format: 'A4',
-      margin: {
-        top: '20mm',
-        right: '15mm',
-        bottom: '20mm',
-        left: '15mm'
-      },
       printBackground: true,
-      preferCSSPageSize: false
-    });
+      margin: {
+        top: headerImage ? '85px' : '20mm',
+        bottom: footerImage ? '65px' : '20mm',
+        left: '20mm',
+        right: '20mm'
+      }
+    };
+
+    if (headerImage || footerImage) {
+      pdfOptions.displayHeaderFooter = true;
+      pdfOptions.headerTemplate = headerImage 
+        ? `<div style="font-size: 0; line-height: 0; margin: 0; padding: 0; width: 210mm; margin-left: 0mm; margin-top: -5mm;"><img src="${headerImage}" style="width: 210mm; height: auto; display: block; margin: 0; padding: 0;"/></div>`
+        : '<div></div>';
+      pdfOptions.footerTemplate = footerImage 
+        ? `<div style="font-size: 0; line-height: 0; margin: 0; padding: 0; width: 210mm; margin-left: 0mm; margin-bottom: -5mm"><img src="${footerImage}" style="width: 210mm; height: auto; display: block; margin: 0; padding: 0;"/></div>`
+        : '<div></div>';
+    }
+
+    const pdfBuffer = await page.pdf(pdfOptions);
 
     await browser.close();
 

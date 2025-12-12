@@ -16,5 +16,11 @@
         "name": "test 2",
         "footer": "/customers/test-2/footer.png",
         "header": "/customers/test-2/header.png"
+    },
+    {
+        "path": "/customers/teste-video",
+        "name": "teste-video",
+        "footer": "/customers/teste-video/footer.png",
+        "header": "/customers/teste-video/header.png"
     }
 ]

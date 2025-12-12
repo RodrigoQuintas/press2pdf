@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import CustomerManager from './components/CustomerManager';
 
 function App() {
@@ -8,6 +8,22 @@ function App() {
   const [error, setError] = useState('');
   const [pdfUrl, setPdfUrl] = useState('');
   const [motivationalMessage, setMotivationalMessage] = useState('');
+  const [customers, setCustomers] = useState([]);
+  const [selectedCustomer, setSelectedCustomer] = useState('');
+  
+  useEffect(() => {
+    loadCustomers();
+  }, []);
+  
+  const loadCustomers = async () => {
+    try {
+      const response = await fetch('/customers/customers.json');
+      const data = await response.json();
+      setCustomers(data);
+    } catch (error) {
+      console.error('Erro ao carregar clientes:', error);
+    }
+  };
 
   const motivationalMessages = [
     "Agora você tem mais tempo para pedalar com a sua bike! 🚴‍♀️",
@@ -44,7 +60,10 @@ function App() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ 
+          url,
+          customerPath: selectedCustomer || null
+        }),
       });
 
       if (!response.ok) {
@@ -117,6 +136,26 @@ function App() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
+          <div>
+            <label htmlFor="customer" className="block text-sm font-medium text-gray-700 mb-2">
+              Cliente (opcional)
+            </label>
+            <select
+              id="customer"
+              value={selectedCustomer}
+              onChange={(e) => setSelectedCustomer(e.target.value)}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition outline-none"
+              disabled={loading}
+            >
+              <option value="">Sem cliente (sem header/footer)</option>
+              {customers.map((customer, index) => (
+                <option key={index} value={customer.path}>
+                  {customer.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          
           <div>
             <label htmlFor="url" className="block text-sm font-medium text-gray-700 mb-2">
               URL da Notícia
