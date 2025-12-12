@@ -4,12 +4,23 @@ import axios from 'axios';
 import { JSDOM } from 'jsdom';
 import { Readability } from '@mozilla/readability';
 import { chromium } from 'playwright';
+import multer from 'multer';
+import fs from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = 3000;
 
 app.use(cors());
 app.use(express.json());
+
+// Configurar multer para upload de imagens
+const storage = multer.memoryStorage();
+const upload = multer({ storage: storage });
 
 // Template HTML para o PDF
 function createPDFTemplate(article) {
@@ -267,6 +278,122 @@ app.post('/generate-pdf', async (req, res) => {
   }
 });
 
+// Rota para adicionar cliente
+app.post('/api/customers', upload.fields([
+  { name: 'header', maxCount: 1 },
+  { name: 'footer', maxCount: 1 }
+]), async (req, res) => {
+  try {
+    console.log('Recebendo requisição para criar cliente');
+    console.log('Body:', req.body);
+    console.log('Files:', req.files);
+    
+    const { name, path: customerPath } = req.body;
+    const headerFile = req.files['header']?.[0];
+    const footerFile = req.files['footer']?.[0];
+
+    if (!name || !customerPath || !headerFile || !footerFile) {
+      console.log('Dados incompletos:', { name, customerPath, hasHeader: !!headerFile, hasFooter: !!footerFile });
+      return res.status(400).json({ error: 'Dados incompletos' });
+    }
+
+    console.log('Criando cliente:', { name, customerPath });
+
+    // Criar diretório do cliente
+    const customerDir = path.join(__dirname, '../frontend/public', customerPath);
+    await fs.mkdir(customerDir, { recursive: true });
+
+    // Salvar imagens
+    const headerPath = path.join(customerDir, 'header.png');
+    const footerPath = path.join(customerDir, 'footer.png');
+    
+    await fs.writeFile(headerPath, headerFile.buffer);
+    await fs.writeFile(footerPath, footerFile.buffer);
+
+    // Ler customers.json
+    const customersFilePath = path.join(__dirname, '../frontend/public/customers/customers.json');
+    let customers = [];
+    
+    try {
+      const data = await fs.readFile(customersFilePath, 'utf-8');
+      customers = JSON.parse(data);
+    } catch (error) {
+      // Se o arquivo não existir, começar com array vazio
+      console.log('Criando novo arquivo customers.json');
+    }
+
+    // Adicionar novo cliente
+    const newCustomer = {
+      path: customerPath,
+      name: name,
+      footer: `${customerPath}/footer.png`,
+      header: `${customerPath}/header.png`
+    };
+
+    customers.push(newCustomer);
+
+    // Salvar customers.json atualizado
+    await fs.writeFile(customersFilePath, JSON.stringify(customers, null, 4), 'utf-8');
+    
+    console.log('Cliente salvo com sucesso:', newCustomer);
+    console.log('Arquivo customers.json atualizado');
+
+    res.json({ success: true, customer: newCustomer });
+  } catch (error) {
+    console.error('Erro ao adicionar cliente:', error);
+    console.error('Stack:', error.stack);
+    res.status(500).json({ error: 'Erro ao salvar cliente: ' + error.message });
+  }
+});
+
+// Rota para remover cliente
+app.delete('/api/customers/:customerPath(*)', async (req, res) => {
+  try {
+    const customerPath = '/' + req.params.customerPath;
+    console.log('Removendo cliente:', customerPath);
+
+    // Ler customers.json
+    const customersFilePath = path.join(__dirname, '../frontend/public/customers/customers.json');
+    let customers = [];
+    
+    try {
+      const data = await fs.readFile(customersFilePath, 'utf-8');
+      customers = JSON.parse(data);
+    } catch (error) {
+      return res.status(404).json({ error: 'Arquivo customers.json não encontrado' });
+    }
+
+    // Encontrar o cliente
+    const customerIndex = customers.findIndex(c => c.path === customerPath);
+    
+    if (customerIndex === -1) {
+      return res.status(404).json({ error: 'Cliente não encontrado' });
+    }
+
+    // Remover diretório do cliente
+    const customerDir = path.join(__dirname, '../frontend/public', customerPath);
+    try {
+      await fs.rm(customerDir, { recursive: true, force: true });
+      console.log('Diretório removido:', customerDir);
+    } catch (error) {
+      console.error('Erro ao remover diretório:', error);
+    }
+
+    // Remover do array
+    customers.splice(customerIndex, 1);
+
+    // Salvar customers.json atualizado
+    await fs.writeFile(customersFilePath, JSON.stringify(customers, null, 4), 'utf-8');
+    
+    console.log('Cliente removido com sucesso');
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Erro ao remover cliente:', error);
+    res.status(500).json({ error: 'Erro ao remover cliente: ' + error.message });
+  }
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'Servidor rodando!' });
@@ -275,4 +402,6 @@ app.get('/health', (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Servidor rodando em http://localhost:${PORT}`);
   console.log(`📄 Endpoint disponível: POST /generate-pdf`);
+  console.log(`👥 Endpoint disponível: POST /api/customers`);
+  console.log(`🗑️  Endpoint disponível: DELETE /api/customers/:path`);
 });

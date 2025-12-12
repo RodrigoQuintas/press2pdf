@@ -1,0 +1,20 @@
+[
+    {
+        "path": "/customers/rs",
+        "name": "Customers RS",
+        "footer": "/customers/rs/footer.png",
+        "header": "/customers/rs/header.png"
+    },
+    {
+        "path": "/customers/teste",
+        "name": "teste",
+        "footer": "/customers/teste/footer.png",
+        "header": "/customers/teste/header.png"
+    },
+    {
+        "path": "/customers/test-2",
+        "name": "test 2",
+        "footer": "/customers/test-2/footer.png",
+        "header": "/customers/test-2/header.png"
+    }
+]

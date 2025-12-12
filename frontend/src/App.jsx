@@ -1,6 +1,8 @@
 import { useState } from 'react';
+import CustomerManager from './components/CustomerManager';
 
 function App() {
+  const [currentPage, setCurrentPage] = useState('pdf'); // 'pdf' or 'customers'
   const [url, setUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -85,9 +87,26 @@ function App() {
     setMotivationalMessage('');
   };
 
+  if (currentPage === 'customers') {
+    return <CustomerManager onBack={() => setCurrentPage('pdf')} />;
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-2xl">
+        {/* Navigation */}
+        <div className="flex justify-end mb-4">
+          <button
+            onClick={() => setCurrentPage('customers')}
+            className="text-blue-600 hover:text-blue-800 font-medium transition flex items-center gap-2"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>
+            Gerenciar Clientes
+          </button>
+        </div>
+
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-gray-800 mb-2">
             🚲 Ale2PDF 🌱
