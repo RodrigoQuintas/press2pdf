@@ -41,7 +41,19 @@ Você precisará instalar as seguintes ferramentas:
 
 ---
 
-## 📥 Passo 2: Baixar o projeto
+## ⚡ INÍCIO RÁPIDO (Usuário Final)
+
+Se você já recebeu a pasta do projeto pronta, basta:
+
+1. **Duplo clique no arquivo** `INICIAR-PRESS2PDF.bat`
+2. Aguarde a aplicação abrir no navegador
+3. **Pronto!** A aplicação está rodando
+
+> ⚠️ **Importante**: NÃO feche a janela preta que aparece (Prompt de Comando). Quando quiser parar a aplicação, feche essa janela ou pressione `Ctrl+C` dentro dela.
+
+---
+
+## 📥 Passo 2: Baixar o projeto (Para Desenvolvedores)
 
 ### Opção A: Usando Git (Recomendado)
 
