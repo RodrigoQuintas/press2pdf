@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import CustomerManager from './components/CustomerManager';
+import ImageUploader from './components/ImageUploader';
 
 function App() {
   const [currentPage, setCurrentPage] = useState('pdf'); // 'pdf' or 'customers'
@@ -10,6 +11,9 @@ function App() {
   const [motivationalMessage, setMotivationalMessage] = useState('');
   const [customers, setCustomers] = useState([]);
   const [selectedCustomer, setSelectedCustomer] = useState('');
+  const [extractionMode, setExtractionMode] = useState('automatic'); // 'automatic' or 'manual'
+  const [images, setImages] = useState([]);
+  const [manualTitle, setManualTitle] = useState('');
   
   useEffect(() => {
     loadCustomers();
@@ -51,33 +55,76 @@ function App() {
       return;
     }
 
+    if (extractionMode === 'manual') {
+      if (images.length === 0) {
+        setError('Por favor, adicione pelo menos uma imagem');
+        return;
+      }
+    }
+
     setLoading(true);
     setError('');
 
     try {
-      const response = await fetch('http://localhost:3000/generate-pdf', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ 
-          url,
-          customerPath: selectedCustomer || null
-        }),
-      });
+      if (extractionMode === 'automatic') {
+        // Fluxo automático com Playwright
+        const response = await fetch('http://localhost:3000/generate-pdf', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ 
+            url,
+            customerPath: selectedCustomer || null
+          }),
+        });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Erro ao gerar PDF');
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Erro ao gerar PDF');
+        }
+
+        // Converter resposta em blob
+        const blob = await response.blob();
+        
+        // Criar URL temporária para visualização
+        const blobUrl = window.URL.createObjectURL(blob);
+        setPdfUrl(blobUrl);
+        setMotivationalMessage(getRandomMessage());
+      } else {
+        // Fluxo manual com upload de imagens
+        const formData = new FormData();
+        formData.append('url', url);
+        formData.append('title', manualTitle);
+        formData.append('customerPath', selectedCustomer || '');
+        
+        images.forEach((image, index) => {
+          formData.append('images', image.file);
+        });
+
+        const response = await fetch('http://localhost:3000/generate-pdf-manual', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Erro ao gerar PDF');
+        }
+
+        // Converter resposta em blob
+        const blob = await response.blob();
+        
+        // Criar URL temporária para visualização
+        setManualTitle('');
+        const blobUrl = window.URL.createObjectURL(blob);
+        setPdfUrl(blobUrl);
+        setMotivationalMessage(getRandomMessage());
+
+        // Limpar imagens após sucesso
+        images.forEach(img => URL.revokeObjectURL(img.preview));
+        setImages([]);
       }
-
-      // Converter resposta em blob
-      const blob = await response.blob();
-      
-      // Criar URL temporária para visualização
-      const blobUrl = window.URL.createObjectURL(blob);
-      setPdfUrl(blobUrl);
-      setMotivationalMessage(getRandomMessage());
 
       setUrl('');
     } catch (err) {
@@ -155,10 +202,63 @@ function App() {
               ))}
             </select>
           </div>
+
+          {/* Modo de Extração */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-3">
+              Modo de Extração
+            </label>
+            <div className="flex gap-4">
+              <label className="flex items-center cursor-pointer">
+                <input
+                  type="radio"
+                  value="automatic"
+                  checked={extractionMode === 'automatic'}
+                  onChange={(e) => setExtractionMode(e.target.value)}
+                  className="w-4 h-4 text-blue-600 focus:ring-blue-500"
+                  disabled={loading}
+                />
+                <span className="ml-2 text-sm text-gray-700">
+                  🤖 Automático
+                </span>
+              </label>
+              <label className="flex items-center cursor-pointer">
+                <input
+                  type="radio"
+                  value="manual"
+                  checked={extractionMode === 'manual'}
+                  onChange={(e) => setExtractionMode(e.target.value)}
+                  className="w-4 h-4 text-blue-600 focus:ring-blue-500"
+                  disabled={loading}
+                />
+                <span className="ml-2 text-sm text-gray-700">
+                  📸 Manual 
+                </span>
+              </label>
+            </div>
+          </div>
+
+          {/* Título da Notícia (apenas no modo manual) */}
+          {extractionMode === 'manual' && (
+            <div>
+              <label htmlFor="manualTitle" className="block text-sm font-medium text-gray-700 mb-2">
+                Título da Notícia (opcional)
+              </label>
+              <input
+                type="text"
+                id="manualTitle"
+                value={manualTitle}
+                onChange={(e) => setManualTitle(e.target.value)}
+                placeholder="Digite o título da notícia..."
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition outline-none"
+                disabled={loading}
+              />
+            </div>
+          )}
           
           <div>
             <label htmlFor="url" className="block text-sm font-medium text-gray-700 mb-2">
-              URL da Notícia
+              URL da Notícia (fonte original)
             </label>
             <input
               type="url"
@@ -170,6 +270,16 @@ function App() {
               disabled={loading}
             />
           </div>
+
+          {/* Upload de Imagens (apenas no modo manual) */}
+          {extractionMode === 'manual' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Imagens da Notícia
+              </label>
+              <ImageUploader images={images} onImagesChange={setImages} />
+            </div>
+          )}
 
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">

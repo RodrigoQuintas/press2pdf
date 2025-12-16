@@ -186,7 +186,32 @@ function createPDFTemplate(article) {
   `.trim();
 }
 
-// Endpoint para gerar PDF
+// Função auxiliar para carregar header e footer do cliente
+async function loadCustomerImages(customerPath) {
+  let headerImage = null;
+  let footerImage = null;
+  
+  if (customerPath) {
+    try {
+      const headerPath = path.join(__dirname, '../frontend/public', customerPath, 'header.png');
+      const footerPath = path.join(__dirname, '../frontend/public', customerPath, 'footer.png');
+      
+      const headerBuffer = await fs.readFile(headerPath);
+      const footerBuffer = await fs.readFile(footerPath);
+      
+      headerImage = `data:image/png;base64,${headerBuffer.toString('base64')}`;
+      footerImage = `data:image/png;base64,${footerBuffer.toString('base64')}`;
+      
+      console.log('Imagens do cliente carregadas:', customerPath);
+    } catch (error) {
+      console.error('Erro ao carregar imagens do cliente:', error.message);
+    }
+  }
+  
+  return { headerImage, footerImage };
+}
+
+// Endpoint para gerar PDF (modo automático)
 app.post('/generate-pdf', async (req, res) => {
   const { url, customerPath } = req.body;
 
@@ -196,25 +221,7 @@ app.post('/generate-pdf', async (req, res) => {
 
   try {
     // Carregar imagens do cliente, se fornecido
-    let headerImage = null;
-    let footerImage = null;
-    
-    if (customerPath) {
-      try {
-        const headerPath = path.join(__dirname, '../frontend/public', customerPath, 'header.png');
-        const footerPath = path.join(__dirname, '../frontend/public', customerPath, 'footer.png');
-        
-        const headerBuffer = await fs.readFile(headerPath);
-        const footerBuffer = await fs.readFile(footerPath);
-        
-        headerImage = `data:image/png;base64,${headerBuffer.toString('base64')}`;
-        footerImage = `data:image/png;base64,${footerBuffer.toString('base64')}`;
-        
-        console.log('Imagens do cliente carregadas:', customerPath);
-      } catch (error) {
-        console.error('Erro ao carregar imagens do cliente:', error.message);
-      }
-    }
+    const { headerImage, footerImage } = await loadCustomerImages(customerPath);
     
     // 1. Baixar o HTML da página
     console.log(`Baixando página: ${url}`);
@@ -300,6 +307,173 @@ app.post('/generate-pdf', async (req, res) => {
 
     res.status(500).json({ 
       error: 'Erro ao processar a notícia. Tente novamente.' 
+    });
+  }
+});
+
+// Endpoint para gerar PDF (modo manual com upload de imagens)
+app.post('/generate-pdf-manual', upload.array('images'), async (req, res) => {
+  const { url, customerPath } = req.body;
+  let { title } = req.body;
+  const images = req.files;
+
+  if (!url) {
+    return res.status(400).json({ error: 'URL é obrigatória' });
+  }
+
+  if (!images || images.length === 0) {
+    return res.status(400).json({ error: 'Pelo menos uma imagem é necessária' });
+  }
+
+  // Se título não for fornecido, usar "Notícia" como padrão
+  if (!title || !title.trim()) {
+    title = 'Notícia';
+  }
+
+  try {
+    console.log(`Gerando PDF manual com ${images.length} imagens`);
+    
+    // Carregar imagens do cliente, se fornecido
+    const { headerImage, footerImage } = await loadCustomerImages(customerPath);
+
+    // Converter imagens para base64
+    const imageDataUrls = images.map(img => {
+      const base64 = img.buffer.toString('base64');
+      const mimeType = img.mimetype;
+      return `data:${mimeType};base64,${base64}`;
+    });
+
+    // Criar HTML com as imagens
+    const imagesHtml = imageDataUrls.map((dataUrl, index) => 
+      `<img src="${dataUrl}" style="width: 100%; height: auto; margin: 30px 0; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); display: block;" alt="Imagem ${index + 1}" />`
+    ).join('\n');
+
+    const htmlContent = `
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Notícia</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      line-height: 1.8;
+      color: #333;
+      background: #fff;
+      padding: 20px 40px;
+    }
+    
+    .article-header {
+      margin-bottom: 40px;
+      padding-bottom: 20px;
+      border-bottom: 3px solid #2563eb;
+      text-align: center;
+    }
+    
+    h1 {
+      font-size: 28px;
+      font-weight: 700;
+      color: #1e293b;
+      margin-bottom: 16px;
+      line-height: 1.3;
+    }
+    
+    .images-container {
+      margin: 40px 0;
+    }
+    
+    .article-footer {
+      margin-top: 60px;
+      padding-top: 30px;
+      border-top: 2px solid #e2e8f0;
+      font-size: 14px;
+      color: #64748b;
+      text-align: center;
+    }
+    
+    .source-link {
+      display: block;
+      margin-top: 10px;
+      word-break: break-all;
+      color: #2563eb;
+      text-decoration: none;
+    }
+    
+    @media print {
+      body {
+        padding: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+    <header class="article-header">
+      <h1>${title}</h1>
+    </header>
+    
+    <div class="images-container">
+      ${imagesHtml}
+    </div>
+    
+    <footer class="article-footer">
+      <p><strong>Fonte original:</strong></p>
+      <a href="${url}" class="source-link">${url}</a>
+    </footer>
+</body>
+</html>
+    `.trim();
+
+    // Gerar PDF com Playwright
+    console.log('Gerando PDF com Playwright...');
+    const browser = await chromium.launch();
+    const page = await browser.newPage();
+    
+    await page.setContent(htmlContent, { 
+      waitUntil: 'networkidle' 
+    });
+
+    const pdfOptions = {
+      format: 'A4',
+      printBackground: true,
+      margin: {
+        top: headerImage ? '85px' : '20mm',
+        bottom: footerImage ? '65px' : '20mm',
+        left: '20mm',
+        right: '20mm'
+      }
+    };
+
+    if (headerImage || footerImage) {
+      pdfOptions.displayHeaderFooter = true;
+      pdfOptions.headerTemplate = headerImage 
+        ? `<div style="font-size: 0; line-height: 0; margin: 0; padding: 0; width: 210mm; margin-left: 0mm; margin-top: -5mm;"><img src="${headerImage}" style="width: 210mm; height: auto; display: block; margin: 0; padding: 0;"/></div>`
+        : '<div></div>';
+      pdfOptions.footerTemplate = footerImage 
+        ? `<div style="font-size: 0; line-height: 0; margin: 0; padding: 0; width: 210mm; margin-left: 0mm; margin-bottom: -5mm"><img src="${footerImage}" style="width: 210mm; height: auto; display: block; margin: 0; padding: 0;"/></div>`
+        : '<div></div>';
+    }
+
+    const pdfBuffer = await page.pdf(pdfOptions);
+
+    await browser.close();
+
+    // Enviar PDF
+    console.log('PDF gerado com sucesso!');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename=noticia.pdf');
+    res.send(pdfBuffer);
+
+  } catch (error) {
+    console.error('Erro ao gerar PDF manual:', error.message);
+    res.status(500).json({ 
+      error: 'Erro ao processar as imagens. Tente novamente.' 
     });
   }
 });
@@ -427,7 +601,8 @@ app.get('/health', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`🚀 Servidor rodando em http://localhost:${PORT}`);
-  console.log(`📄 Endpoint disponível: POST /generate-pdf`);
+  console.log(`📄 Endpoint disponível: POST /generate-pdf (modo automático)`);
+  console.log(`📸 Endpoint disponível: POST /generate-pdf-manual (modo manual)`);
   console.log(`👥 Endpoint disponível: POST /api/customers`);
   console.log(`🗑️  Endpoint disponível: DELETE /api/customers/:path`);
 });
