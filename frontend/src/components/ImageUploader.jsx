@@ -1,8 +1,9 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 
 function ImageUploader({ images, onImagesChange }) {
   const [isDragging, setIsDragging] = useState(false);
   const [draggedIndex, setDraggedIndex] = useState(null);
+  const [showHint, setShowHint] = useState(true);
   const fileInputRef = useRef(null);
 
   const handleDragOver = (e) => {
@@ -41,8 +42,31 @@ function ImageUploader({ images, onImagesChange }) {
       name: file.name
     }));
 
-    onImagesChange([...images, ...newImages]);
+    // Inverter a ordem das novas imagens e adicionar no início
+    onImagesChange([...newImages.reverse(), ...images]);
   };
+
+  // Suporte para colar imagens do clipboard
+  useEffect(() => {
+    const handlePaste = (e) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      const imageItems = Array.from(items).filter(item => item.type.startsWith('image/'));
+      
+      if (imageItems.length > 0) {
+        e.preventDefault();
+        const files = imageItems.map(item => item.getAsFile()).filter(Boolean);
+        if (files.length > 0) {
+          addImages(files);
+          setShowHint(false);
+        }
+      }
+    };
+
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [images]);
 
   const removeImage = (id) => {
     const updatedImages = images.filter(img => img.id !== id);
@@ -81,6 +105,40 @@ function ImageUploader({ images, onImagesChange }) {
 
   return (
     <div className="space-y-4">
+      {/* Dica de Atalho */}
+      {showHint && (
+        <div className="bg-gradient-to-r from-green-50 to-blue-50 border-2 border-green-200 rounded-lg p-4">
+          <div className="flex items-start gap-3">
+            <div className="flex-shrink-0 text-2xl">⚡</div>
+            <div className="flex-1">
+              <h4 className="font-bold text-gray-800 mb-2">Captura Super Rápida!</h4>
+              <div className="space-y-2 text-sm text-gray-700">
+                <p className="flex items-center gap-2">
+                  <span className="font-semibold text-green-600">Mac:</span>
+                  <kbd className="px-2 py-1 bg-white border border-gray-300 rounded shadow-sm font-mono text-xs">Cmd + Shift + 4</kbd>
+                  <span>→ Selecione a área → Cole aqui com</span>
+                  <kbd className="px-2 py-1 bg-white border border-gray-300 rounded shadow-sm font-mono text-xs">Cmd + V</kbd>
+                </p>
+                <p className="flex items-center gap-2">
+                  <span className="font-semibold text-blue-600">Windows:</span>
+                  <kbd className="px-2 py-1 bg-white border border-gray-300 rounded shadow-sm font-mono text-xs">Win + Shift + S</kbd>
+                  <span>→ Selecione a área → Cole aqui com</span>
+                  <kbd className="px-2 py-1 bg-white border border-gray-300 rounded shadow-sm font-mono text-xs">Ctrl + V</kbd>
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowHint(false)}
+              className="flex-shrink-0 text-gray-400 hover:text-gray-600"
+            >
+              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Área de Drop */}
       <div
         onDragOver={handleDragOver}
@@ -117,7 +175,7 @@ function ImageUploader({ images, onImagesChange }) {
             />
           </svg>
           <div className="text-gray-600">
-            <span className="font-medium text-blue-600">Clique para selecionar</span> ou arraste imagens aqui
+            <span className="font-medium text-blue-600">Clique para selecionar</span>, arraste ou <span className="font-medium text-green-600">cole (Ctrl+V)</span>
           </div>
           <p className="text-sm text-gray-500">PNG, JPG, GIF até 10MB</p>
         </div>

@@ -94,6 +94,20 @@ function createPDFTemplate(article) {
       box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     }
     
+    /* Esconder elementos vazios */
+    article p:empty,
+    article div:empty,
+    article section:empty,
+    article figure:empty,
+    article picture:empty,
+    img[src=""],
+    img:not([src]) {
+      display: none !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      height: 0 !important;
+    }
+    
     article p {
       margin-bottom: 20px;
       font-size: 16px;
@@ -169,6 +183,7 @@ function createPDFTemplate(article) {
     <header class="article-header">
       <h1>${article.title}</h1>
       ${article.byline ? `<p class="byline">Por ${article.byline}</p>` : ''}
+      ${article.publishedDate ? `<div class="metadata"><span>📅 ${article.publishedDate}</span></div>` : ''}
     </header>
     
     ${article.excerpt ? `<div class="excerpt">${article.excerpt}</div>` : ''}
@@ -184,6 +199,303 @@ function createPDFTemplate(article) {
 </body>
 </html>
   `.trim();
+}
+
+// Função auxiliar para extrair data de publicação
+function extractPublicationDate(dom) {
+  const document = dom.window.document;
+  
+  // Tentar múltiplos métodos de extração de data
+  
+  // 1. Meta tags comuns
+  const metaSelectors = [
+    'meta[property="article:published_time"]',
+    'meta[property="og:published_time"]',
+    'meta[name="publish_date"]',
+    'meta[name="pubdate"]',
+    'meta[name="date"]',
+    'meta[property="datePublished"]'
+  ];
+  
+  for (const selector of metaSelectors) {
+    const meta = document.querySelector(selector);
+    if (meta && meta.content) {
+      console.log(`Data encontrada via ${selector}:`, meta.content);
+      return formatDate(meta.content);
+    }
+  }
+  
+  // 2. JSON-LD (Schema.org)
+  const jsonLdScripts = document.querySelectorAll('script[type="application/ld+json"]');
+  for (const script of jsonLdScripts) {
+    try {
+      const data = JSON.parse(script.textContent);
+      const date = data.datePublished || data.publishedDate;
+      if (date) {
+        console.log('Data encontrada via JSON-LD:', date);
+        return formatDate(date);
+      }
+    } catch (e) {
+      // Ignorar erros de parse
+    }
+  }
+  
+  // 3. Seletores específicos comuns em sites de notícias
+  const dateSelectors = [
+    'time[datetime]',
+    '.entry-date',
+    '.post-date',
+    '.published',
+    '.date',
+    '.article-date',
+    '[class*="date"]',
+    '[class*="time"]'
+  ];
+  
+  for (const selector of dateSelectors) {
+    const element = document.querySelector(selector);
+    if (element) {
+      const datetime = element.getAttribute('datetime') || element.textContent;
+      if (datetime && datetime.trim()) {
+        console.log(`Data encontrada via seletor ${selector}:`, datetime);
+        return formatDate(datetime);
+      }
+    }
+  }
+  
+  console.log('Data de publicação não encontrada');
+  return null;
+}
+
+// Função para formatar data
+function formatDate(dateString) {
+  try {
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) {
+      // Tentar parsear formatos brasileiros (dd/mm/yyyy)
+      const parts = dateString.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+      if (parts) {
+        return `${parts[1].padStart(2, '0')}/${parts[2].padStart(2, '0')}/${parts[3]}`;
+      }
+      return dateString.trim();
+    }
+    
+    // Formatar para pt-BR
+    return date.toLocaleDateString('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
+    });
+  } catch (e) {
+    return dateString;
+  }
+}
+
+// Função auxiliar para extrair imagens do artigo
+function extractArticleImages(dom, baseUrl) {
+  const document = dom.window.document;
+  const images = [];
+  const seenUrls = new Set();
+  
+  // Selecionar imagens do conteúdo principal - ordem de prioridade
+  const contentSelectors = [
+    // Imagens destacadas e principais
+    'figure.post-thumbnail img',
+    '.post-thumbnail img',
+    'figure img',
+    '.featured-image img',
+    '.wp-post-image',
+    // Conteúdo do artigo
+    'article img',
+    '.entry-content img',
+    '.post-content img',
+    '.article-content img',
+    '.content img',
+    'main img',
+    '.post img',
+    '[class*="content"] img',
+    '[class*="article"] img',
+    '[class*="post"] img',
+    'img' // Fallback para todas as imagens
+  ];
+  
+  for (const selector of contentSelectors) {
+    const imgElements = document.querySelectorAll(selector);
+    console.log(`Testando seletor '${selector}': ${imgElements.length} imagens encontradas`);
+    
+    imgElements.forEach(img => {
+      // Tentar múltiplos atributos para obter a URL da imagem em ALTA QUALIDADE
+      let imgUrl = null;
+      console.log(`Processando imagem com classes: ${img.className}`);
+      
+      // 1. Verificar se o src já é uma imagem de boa qualidade
+      const srcUrl = img.src || img.getAttribute('src');
+      
+      // 2. Verificar srcset para imagens de maior resolução
+      const srcsetStr = img.srcset || img.getAttribute('srcset') || img.getAttribute('data-srcset');
+      let srcsetUrl = null;
+      
+      if (srcsetStr) {
+        console.log(`srcset encontrado: ${srcsetStr}`);
+        const srcsetParts = srcsetStr.split(',').map(s => s.trim());
+        let maxWidth = 0;
+        
+        srcsetParts.forEach(part => {
+          const match = part.match(/^(.+?)\s+(\d+)w?/);
+          if (match) {
+            const [, url, widthStr] = match;
+            const width = parseInt(widthStr);
+            if (width > maxWidth) {
+              maxWidth = width;
+              srcsetUrl = url.trim();
+            }
+          }
+        });
+        
+        if (srcsetUrl) {
+          console.log(`Melhor imagem do srcset: ${srcsetUrl} (${maxWidth}w)`);
+        }
+      }
+      
+      // 3. Priorizar srcset se encontrou, senão usar src
+      imgUrl = srcsetUrl || srcUrl;
+      
+      // 4. Fallback para atributos de alta resolução
+      if (!imgUrl) {
+        imgUrl = img.getAttribute('data-full-url') ||
+                 img.getAttribute('data-large-file') ||
+                 img.getAttribute('data-original-src') ||
+                 img.getAttribute('data-hires') ||
+                 img.getAttribute('data-full-src') ||
+                 img.getAttribute('data-src') || 
+                 img.getAttribute('data-lazy-src') ||
+                 img.getAttribute('data-original');
+      }
+      
+      if (!imgUrl) {
+        console.log('⚠️ Nenhuma URL encontrada para esta imagem');
+        return;
+      }
+      
+      if (imgUrl && !seenUrls.has(imgUrl)) {
+        // Limpar parâmetros de query desnecessários às vezes
+        try {
+          // Converter URL relativa para absoluta
+          if (imgUrl.startsWith('//')) {
+            imgUrl = 'https:' + imgUrl;
+          } else if (imgUrl.startsWith('/')) {
+            const urlObj = new URL(baseUrl);
+            imgUrl = `${urlObj.protocol}//${urlObj.host}${imgUrl}`;
+          } else if (!imgUrl.startsWith('http')) {
+            imgUrl = new URL(imgUrl, baseUrl).href;
+          }
+          
+          // Filtrar URLs inválidas ou de tracking
+          if (imgUrl.includes('data:image') || 
+              imgUrl.includes('tracking') || 
+              imgUrl.includes('pixel') ||
+              imgUrl.includes('spacer.gif') ||
+              imgUrl.includes('blank.gif')) {
+            console.log(`URL inválida/tracking filtrada: ${imgUrl}`);
+            return;
+          }
+          
+          console.log(`URL da imagem extraída: ${imgUrl}`);
+          
+          // Filtrar imagens muito pequenas (provavelmente ícones) - APENAS se ambas dimensões forem explicitamente definidas e pequenas
+          const widthAttr = img.getAttribute('width');
+          const heightAttr = img.getAttribute('height');
+          
+          if (widthAttr && heightAttr) {
+            const width = parseInt(widthAttr);
+            const height = parseInt(heightAttr);
+            
+            if ((width < 80 && height < 80) && width > 0 && height > 0) {
+              console.log(`Imagem muito pequena ignorada (atributos): ${width}x${height} - ${imgUrl}`);
+              return;
+            }
+          }
+          
+          // Verificar se a imagem não é um logo ou ícone pelo nome
+          const lowerUrl = imgUrl.toLowerCase();
+          const lowerAlt = (img.getAttribute('alt') || '').toLowerCase();
+          const lowerClass = (img.getAttribute('class') || '').toLowerCase();
+          const lowerSrc = (img.src || '').toLowerCase();
+          
+          // Filtrar apenas logos/ícones/banners MUITO ESPECÍFICOS que não sejam conteúdo da notícia
+          // Usar padrões mais restritivos para evitar falsos positivos
+          const isDefinitelyNotContent = (
+            // URLs com padrões muito específicos de não-conteúdo
+            lowerUrl.match(/\/(logo|icon|avatar|emoji)s?\./) || // logo.png, icons.jpg
+            lowerUrl.includes('/logo/') ||
+            lowerUrl.includes('/icon/') ||
+            lowerUrl.includes('/widget/') ||
+            lowerUrl.includes('/ads/') ||
+            lowerUrl.includes('/ad-') ||
+            lowerUrl.includes('spacer.') ||
+            lowerUrl.includes('blank.') ||
+            // Classes muito específicas de widgets/banners
+            lowerClass.match(/\b(logo-|icon-|widget-|banner-|ad-|sidebar-)/) ||
+            // Alt text que indica claramente publicidade (não apenas "banner" que pode estar em imagem de notícia)
+            lowerAlt.match(/\b(publicidade|anúncio|propaganda|advertisement)\b/)
+          );
+          
+          if (isDefinitelyNotContent) {
+            console.log(`Imagem de logo/ícone/banner ignorada: ${imgUrl}`);
+            return;
+          }
+          
+          seenUrls.add(imgUrl);
+          images.push(imgUrl);
+          console.log(`✅ Imagem ACEITA e adicionada: ${imgUrl}`);
+        } catch (e) {
+          console.error(`❌ Erro ao processar URL da imagem: ${imgUrl}`, e.message);
+        }
+      }
+    });
+    
+    if (images.length > 0) {
+      console.log(`${images.length} imagens encontradas usando seletor: ${selector}`);
+      break; // Se encontrou imagens, não precisa procurar em outros seletores
+    }
+  }
+  
+  console.log(`Total de ${images.length} imagens extraídas`);
+  return images;
+}
+
+// Função auxiliar para baixar imagens e converter para base64
+async function downloadAndConvertImages(imageUrls) {
+  const imageDataUrls = [];
+  
+  for (const url of imageUrls) {
+    try {
+      console.log(`Baixando imagem: ${url}`);
+      const response = await axios.get(url, {
+        responseType: 'arraybuffer',
+        timeout: 15000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+          'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Referer': url,
+          'Sec-Fetch-Dest': 'image',
+          'Sec-Fetch-Mode': 'no-cors',
+          'Sec-Fetch-Site': 'same-origin'
+        }
+      });
+      
+      const contentType = response.headers['content-type'];
+      const base64 = Buffer.from(response.data).toString('base64');
+      imageDataUrls.push(`data:${contentType};base64,${base64}`);
+      console.log('Imagem baixada com sucesso');
+    } catch (error) {
+      console.error(`Erro ao baixar imagem ${url}:`, error.message);
+    }
+  }
+  
+  return imageDataUrls;
 }
 
 // Função auxiliar para carregar header e footer do cliente
@@ -223,18 +535,89 @@ app.post('/generate-pdf', async (req, res) => {
     // Carregar imagens do cliente, se fornecido
     const { headerImage, footerImage } = await loadCustomerImages(customerPath);
     
-    // 1. Baixar o HTML da página
-    console.log(`Baixando página: ${url}`);
-    const response = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      },
-      timeout: 10000
+    // 1. Usar Playwright para carregar a página com JavaScript habilitado
+    console.log(`Carregando página com Playwright: ${url}`);
+    const browser = await chromium.launch();
+    const context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     });
-
+    const page = await context.newPage();
+    
+    // Navegar para a página
+    try {
+      await page.goto(url, { 
+        waitUntil: 'networkidle',
+        timeout: 45000 
+      });
+    } catch (error) {
+      // Se networkidle falhar, tentar com 'load' apenas
+      console.log('Networkidle timeout, tentando com estratégia "load"...');
+      await page.goto(url, { 
+        waitUntil: 'load',
+        timeout: 30000 
+      });
+    }
+    
+    // Esperar um pouco mais para garantir que imagens lazy-load sejam carregadas
+    console.log('Aguardando carregamento completo das imagens...');
+    await page.waitForTimeout(3000);
+    
+    // Scroll na página para forçar lazy loading
+    await page.evaluate(() => {
+      window.scrollTo(0, document.body.scrollHeight);
+    });
+    await page.waitForTimeout(2000);
+    
+    // Remover apenas seções MUITO ESPECÍFICAS que são definitivamente não-conteúdo
+    await page.evaluate(() => {
+      const selectorsToRemove = [
+        'section.whatsapp-groups',
+        'section.virals',
+        '.newsletter-signup',
+        '.social-share-buttons',
+        'aside.advertisement'
+      ];
+      
+      selectorsToRemove.forEach(selector => {
+        try {
+          const elements = document.querySelectorAll(selector);
+          elements.forEach(el => {
+            console.log('Removendo:', selector);
+            el.remove();
+          });
+        } catch (e) {
+          // Ignorar erros de seletores inválidos
+        }
+      });
+    });
+    
+    // Pegar o HTML completo após JavaScript executar e remover elementos
+    const htmlContent = await page.content();
+    await browser.close();
+    
     // 2. Processar com Readability
     console.log('Extraindo conteúdo com Readability...');
-    const dom = new JSDOM(response.data, { url });
+    const dom = new JSDOM(htmlContent, { url });
+    
+    // Remover seções indesejadas após processar com Playwright
+    const document = dom.window.document;
+    const unwantedSelectors = [
+      'section.whatsapp-groups',
+      'section.virals'
+    ];
+    
+    unwantedSelectors.forEach(selector => {
+      try {
+        const elements = document.querySelectorAll(selector);
+        elements.forEach(el => {
+          console.log(`Removendo elemento indesejado: ${selector}`);
+          el.remove();
+        });
+      } catch (e) {
+        // Ignorar erros de seletores
+      }
+    });
+    
     const reader = new Readability(dom.window.document);
     const article = reader.parse();
 
@@ -244,18 +627,77 @@ app.post('/generate-pdf', async (req, res) => {
       });
     }
 
+    // Extrair data de publicação
+    const publishedDate = extractPublicationDate(dom);
+    if (publishedDate) {
+      article.publishedDate = publishedDate;
+    }
+
+    // Extrair imagens adicionais do artigo
+    const imageUrls = extractArticleImages(dom, url);
+    console.log(`Imagens a serem baixadas: ${imageUrls.length}`);
+    
+    if (imageUrls.length > 0) {
+      console.log('Baixando imagens adicionais...');
+      const additionalImages = await downloadAndConvertImages(imageUrls);
+      console.log(`Imagens baixadas com sucesso: ${additionalImages.length}`);
+      
+      // SEMPRE adicionar as imagens baixadas, pois são as de maior qualidade
+      if (additionalImages.length > 0) {
+        const imagesHtml = additionalImages.map((dataUrl, index) => 
+          `<img src="${dataUrl}" style="width: 100%; height: auto; margin: 30px 0; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);" alt="Imagem ${index + 1}" />`
+        ).join('\n');
+        
+        // Adicionar após o primeiro parágrafo
+        const firstParagraphEnd = article.content.indexOf('</p>');
+        if (firstParagraphEnd > -1) {
+          article.content = article.content.slice(0, firstParagraphEnd + 4) + '\n' + imagesHtml + '\n' + article.content.slice(firstParagraphEnd + 4);
+        } else {
+          article.content = imagesHtml + '\n' + article.content;
+        }
+        console.log(`${additionalImages.length} imagens adicionadas ao conteúdo`);
+      }
+    } else {
+      console.log('Nenhuma imagem encontrada na página');
+    }
+
     // Adicionar informações extras
     article.siteName = url;
 
+    // Limpar espaços vazios e tags vazias do conteúdo de forma recursiva e agressiva
+    let cleanedContent = article.content;
+    let previousLength = 0;
+    
+    // Loop até não haver mais mudanças (remove elementos vazios aninhados)
+    while (cleanedContent.length !== previousLength) {
+      previousLength = cleanedContent.length;
+      cleanedContent = cleanedContent
+        // Remove imagens sem src ou com src vazio/inválido
+        .replace(/<img[^>]*src=""[^>]*>/gi, '')
+        .replace(/<img[^>]*src=''[^>]*>/gi, '')
+        .replace(/<img(?![^>]*src=)[^>]*>/gi, '')
+        // Remove iframes e noscript
+        .replace(/<iframe[^>]*>.*?<\/iframe>/gi, '')
+        .replace(/<noscript[^>]*>.*?<\/noscript>/gi, '')
+        // Remove tags vazias (incluindo com espaços, &nbsp;, quebras de linha)
+        .replace(/<(p|div|section|figure|picture|span|article|header|footer|aside|nav|main)[^>]*>\s*(&nbsp;|\s|<br\s*\/?>)*\s*<\/\1>/gi, '')
+        // Remove múltiplas tags <br> consecutivas
+        .replace(/(<br\s*\/?\s*>\s*){3,}/gi, '<br><br>')
+        // Remove múltiplas linhas em branco
+        .replace(/\n\s*\n\s*\n+/g, '\n\n');
+    }
+    
+    article.content = cleanedContent.trim();
+
     // 3. Criar HTML do PDF
-    const htmlContent = createPDFTemplate(article);
+    const htmlForPdf = createPDFTemplate(article);
 
     // 4. Gerar PDF com Playwright
     console.log('Gerando PDF com Playwright...');
-    const browser = await chromium.launch();
-    const page = await browser.newPage();
+    const browser2 = await chromium.launch();
+    const pdfPage = await browser2.newPage();
     
-    await page.setContent(htmlContent, { 
+    await pdfPage.setContent(htmlForPdf, { 
       waitUntil: 'networkidle' 
     });
 
@@ -280,9 +722,9 @@ app.post('/generate-pdf', async (req, res) => {
         : '<div></div>';
     }
 
-    const pdfBuffer = await page.pdf(pdfOptions);
+    const pdfBuffer = await pdfPage.pdf(pdfOptions);
 
-    await browser.close();
+    await browser2.close();
 
     // 5. Enviar PDF
     console.log('PDF gerado com sucesso!');
@@ -297,6 +739,12 @@ app.post('/generate-pdf', async (req, res) => {
       return res.status(400).json({ 
         error: 'Não foi possível acessar a URL fornecida' 
       });
+    
+    if (error.response?.status === 403) {
+      return res.status(403).json({ 
+        error: 'Acesso negado pelo site. O site pode estar bloqueando requisições automáticas. Tente usar o modo manual.' 
+      });
+    }
     }
     
     if (error.response?.status === 404) {
