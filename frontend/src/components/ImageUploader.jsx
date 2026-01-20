@@ -42,8 +42,14 @@ function ImageUploader({ images, onImagesChange }) {
       name: file.name
     }));
 
-    // Inverter a ordem das novas imagens e adicionar no início
-    onImagesChange([...newImages.reverse(), ...images]);
+    // Se já houver imagens, adicionar no final
+    // Se não houver imagens, adicionar normalmente (invertidas no início)
+    if (images.length > 0) {
+      onImagesChange([...images, ...newImages]);
+    } else {
+      // Inverter a ordem das novas imagens e adicionar no início
+      onImagesChange([...newImages.reverse(), ...images]);
+    }
   };
 
   // Suporte para colar imagens do clipboard

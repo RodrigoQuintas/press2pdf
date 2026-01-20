@@ -15,7 +15,9 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = 3000;
 
-app.use(cors());
+app.use(cors({
+  exposedHeaders: ['Content-Disposition']
+}));
 app.use(express.json());
 
 // Configurar multer para upload de imagens
@@ -87,11 +89,15 @@ function createPDFTemplate(article) {
     }
     
     article img {
-      width: 100%;
+      max-width: 100%;
+      max-height: 240mm; /* Limita a altura para caber em A4 considerando margens */
+      width: auto;
       height: auto;
       margin: 30px 0;
       border-radius: 8px;
       box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      object-fit: contain; /* Mantém proporção sem distorcer */
+      page-break-inside: avoid; /* Evita quebra de imagem entre páginas */
     }
     
     /* Esconder elementos vazios */
@@ -288,6 +294,37 @@ function formatDate(dateString) {
     });
   } catch (e) {
     return dateString;
+  }
+}
+
+// Função para gerar nome do arquivo PDF
+function generatePdfFilename(url, publishedDate) {
+  try {
+    // Extrair domínio da URL
+    const urlObj = new URL(url);
+    let domain = urlObj.hostname.replace(/^www\./, ''); // Remove 'www.'
+    
+    // Pegar apenas o domínio base (antes do primeiro ponto)
+    // Ex: diarioinduscom.com.br -> diarioinduscom, g1.globo.com -> g1
+    const domainParts = domain.split('.');
+    const baseDomain = domainParts[0];
+    
+    // Formatar data para o nome do arquivo (YYYYMMDD)
+    let dateStr = '';
+    if (publishedDate) {
+      // Converter formato dd/mm/yyyy para yyyymmdd
+      const parts = publishedDate.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+      if (parts) {
+        dateStr = `_${parts[3]}${parts[2]}${parts[1]}`; // YYYYMMDD
+      }
+    }
+    
+    const filename = `${baseDomain}${dateStr}.pdf`;
+    console.log('Nome do arquivo gerado:', filename);
+    return filename;
+  } catch (e) {
+    console.error('Erro ao gerar nome do arquivo:', e.message);
+    return 'noticia.pdf';
   }
 }
 
@@ -644,8 +681,9 @@ app.post('/generate-pdf', async (req, res) => {
       
       // SEMPRE adicionar as imagens baixadas, pois são as de maior qualidade
       if (additionalImages.length > 0) {
+        // Adicionar cada imagem como um parágrafo separado para garantir que todas sejam preservadas
         const imagesHtml = additionalImages.map((dataUrl, index) => 
-          `<img src="${dataUrl}" style="width: 100%; height: auto; margin: 30px 0; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);" alt="Imagem ${index + 1}" />`
+          `<p><img src="${dataUrl}" style="width: 100%; height: auto; margin: 30px 0; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);" alt="Imagem ${index + 1}" /></p>`
         ).join('\n');
         
         // Adicionar após o primeiro parágrafo
@@ -663,31 +701,6 @@ app.post('/generate-pdf', async (req, res) => {
 
     // Adicionar informações extras
     article.siteName = url;
-
-    // Limpar espaços vazios e tags vazias do conteúdo de forma recursiva e agressiva
-    let cleanedContent = article.content;
-    let previousLength = 0;
-    
-    // Loop até não haver mais mudanças (remove elementos vazios aninhados)
-    while (cleanedContent.length !== previousLength) {
-      previousLength = cleanedContent.length;
-      cleanedContent = cleanedContent
-        // Remove imagens sem src ou com src vazio/inválido
-        .replace(/<img[^>]*src=""[^>]*>/gi, '')
-        .replace(/<img[^>]*src=''[^>]*>/gi, '')
-        .replace(/<img(?![^>]*src=)[^>]*>/gi, '')
-        // Remove iframes e noscript
-        .replace(/<iframe[^>]*>.*?<\/iframe>/gi, '')
-        .replace(/<noscript[^>]*>.*?<\/noscript>/gi, '')
-        // Remove tags vazias (incluindo com espaços, &nbsp;, quebras de linha)
-        .replace(/<(p|div|section|figure|picture|span|article|header|footer|aside|nav|main)[^>]*>\s*(&nbsp;|\s|<br\s*\/?>)*\s*<\/\1>/gi, '')
-        // Remove múltiplas tags <br> consecutivas
-        .replace(/(<br\s*\/?\s*>\s*){3,}/gi, '<br><br>')
-        // Remove múltiplas linhas em branco
-        .replace(/\n\s*\n\s*\n+/g, '\n\n');
-    }
-    
-    article.content = cleanedContent.trim();
 
     // 3. Criar HTML do PDF
     const htmlForPdf = createPDFTemplate(article);
@@ -728,8 +741,9 @@ app.post('/generate-pdf', async (req, res) => {
 
     // 5. Enviar PDF
     console.log('PDF gerado com sucesso!');
+    const filename = generatePdfFilename(url, article.publishedDate);
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', 'attachment; filename=noticia.pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(pdfBuffer);
 
   } catch (error) {
@@ -759,23 +773,281 @@ app.post('/generate-pdf', async (req, res) => {
   }
 });
 
+// Endpoint para extrair conteúdo sem gerar PDF (para edição)
+app.post('/extract-content', async (req, res) => {
+  const { url } = req.body;
+
+  if (!url) {
+    return res.status(400).json({ error: 'URL é obrigatória' });
+  }
+
+  try {
+    // 1. Usar Playwright para carregar a página
+    console.log(`Extraindo conteúdo: ${url}`);
+    const browser = await chromium.launch();
+    const context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    });
+    const page = await context.newPage();
+    
+    try {
+      await page.goto(url, { 
+        waitUntil: 'networkidle',
+        timeout: 45000 
+      });
+    } catch (error) {
+      console.log('Networkidle timeout, tentando com estratégia "load"...');
+      await page.goto(url, { 
+        waitUntil: 'load',
+        timeout: 30000 
+      });
+    }
+    
+    console.log('Aguardando carregamento completo das imagens...');
+    await page.waitForTimeout(3000);
+    
+    await page.evaluate(() => {
+      window.scrollTo(0, document.body.scrollHeight);
+    });
+    await page.waitForTimeout(2000);
+    
+    await page.evaluate(() => {
+      const selectorsToRemove = [
+        'section.whatsapp-groups',
+        'section.virals',
+        '.newsletter-signup',
+        '.social-share-buttons',
+        'aside.advertisement'
+      ];
+      
+      selectorsToRemove.forEach(selector => {
+        try {
+          const elements = document.querySelectorAll(selector);
+          elements.forEach(el => el.remove());
+        } catch (e) {}
+      });
+    });
+    
+    const htmlContent = await page.content();
+    await browser.close();
+    
+    // 2. Processar com Readability
+    console.log('Extraindo conteúdo com Readability...');
+    const dom = new JSDOM(htmlContent, { url });
+    
+    // Remover seções indesejadas após processar com Playwright (MESMO QUE NO ENDPOINT /generate-pdf)
+    const document = dom.window.document;
+    const unwantedSelectors = [
+      'section.whatsapp-groups',
+      'section.virals'
+    ];
+    
+    unwantedSelectors.forEach(selector => {
+      try {
+        const elements = document.querySelectorAll(selector);
+        elements.forEach(el => {
+          console.log(`Removendo elemento indesejado: ${selector}`);
+          el.remove();
+        });
+      } catch (e) {
+        // Ignorar erros de seletores
+      }
+    });
+    
+    const reader = new Readability(dom.window.document);
+    const article = reader.parse();
+
+    if (!article) {
+      return res.status(400).json({ 
+        error: 'Não foi possível processar a notícia. Verifique se a URL é válida.' 
+      });
+    }
+
+    // Extrair data de publicação
+    const publishedDate = extractPublicationDate(dom);
+    if (publishedDate) {
+      article.publishedDate = publishedDate;
+    }
+
+    // Extrair imagens adicionais do artigo (MESMO QUE NO ENDPOINT /generate-pdf)
+    const imageUrls = extractArticleImages(dom, url);
+    console.log(`Imagens a serem baixadas: ${imageUrls.length}`);
+    
+    if (imageUrls.length > 0) {
+      // NO MODO DE EDIÇÃO: NÃO baixar as imagens, apenas adicionar as URLs
+      // (imagens em base64 são muito pesadas para o TipTap editor)
+      console.log('Adicionando URLs das imagens (sem download para editor)...');
+      
+      const imagesHtml = imageUrls.map((imageUrl, index) => 
+        `<p><img src="${imageUrl}" style="width: 100%; height: auto; margin: 30px 0; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);" alt="Imagem ${index + 1}" /></p>`
+      ).join('\n');
+      
+      // Adicionar após o primeiro parágrafo
+      const firstParagraphEnd = article.content.indexOf('</p>');
+      if (firstParagraphEnd > -1) {
+        article.content = article.content.slice(0, firstParagraphEnd + 4) + '\n' + imagesHtml + '\n' + article.content.slice(firstParagraphEnd + 4);
+      } else {
+        article.content = imagesHtml + '\n' + article.content;
+      }
+      console.log(`${imageUrls.length} URLs de imagens adicionadas ao conteúdo`);
+    } else {
+      console.log('Nenhuma imagem encontrada na página');
+    }
+
+    // Adicionar informações extras
+    article.siteName = url;
+
+    // Log para debug: contar quantas imagens existem no conteúdo final
+    const imageCount = (article.content.match(/<img[^>]*>/gi) || []).length;
+    console.log(`📸 Conteúdo final contém ${imageCount} imagens`);
+    console.log(`📝 Primeiros 500 caracteres do conteúdo:\n${article.content.substring(0, 500)}`);
+
+    console.log('Conteúdo extraído com sucesso!');
+    res.json({
+      title: article.title,
+      byline: article.byline,
+      publishedDate: article.publishedDate,
+      siteName: article.siteName,
+      content: article.content,
+      excerpt: article.excerpt
+    });
+
+  } catch (error) {
+    console.error('Erro ao extrair conteúdo:', error.message);
+    
+    if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+      return res.status(400).json({ 
+        error: 'Não foi possível acessar a URL fornecida' 
+      });
+    }
+    
+    if (error.response?.status === 403) {
+      return res.status(403).json({ 
+        error: 'Acesso negado pelo site. O site pode estar bloqueando requisições automáticas.' 
+      });
+    }
+
+    res.status(500).json({ 
+      error: 'Erro ao processar a notícia. Tente novamente.' 
+    });
+  }
+});
+
+// Endpoint para gerar PDF a partir de conteúdo editado
+app.post('/generate-pdf-from-content', async (req, res) => {
+  const { content, title, byline, publishedDate, siteName, customerPath, url } = req.body;
+
+  if (!content) {
+    return res.status(400).json({ error: 'Conteúdo é obrigatório' });
+  }
+
+  try {
+    console.log('Gerando PDF a partir do conteúdo editado...');
+    
+    // Carregar imagens do cliente
+    const { headerImage, footerImage } = await loadCustomerImages(customerPath);
+    
+    // Extrair URLs de imagens do conteúdo e converter para base64
+    const imgRegex = /<img[^>]+src="([^">]+)"/g;
+    const imageUrls = [];
+    let match;
+    while ((match = imgRegex.exec(content)) !== null) {
+      const imgUrl = match[1];
+      // Só baixar se não for data: URI (já está em base64)
+      if (!imgUrl.startsWith('data:')) {
+        imageUrls.push(imgUrl);
+      }
+    }
+    
+    let processedContent = content;
+    
+    if (imageUrls.length > 0) {
+      console.log(`Baixando ${imageUrls.length} imagens para o PDF...`);
+      const downloadedImages = await downloadAndConvertImages(imageUrls);
+      
+      // Substituir URLs pelas versões em base64
+      imageUrls.forEach((url, index) => {
+        if (downloadedImages[index]) {
+          processedContent = processedContent.replace(url, downloadedImages[index]);
+        }
+      });
+      console.log('Imagens convertidas para base64');
+    }
+    
+    // Criar objeto article com os dados recebidos
+    const article = {
+      title: title || 'Sem título',
+      byline: byline,
+      publishedDate: publishedDate,
+      siteName: siteName || url,
+      content: processedContent,
+      excerpt: ''
+    };
+
+    // Criar HTML do PDF
+    const htmlForPdf = createPDFTemplate(article);
+
+    // Gerar PDF com Playwright
+    console.log('Gerando PDF com Playwright...');
+    const browser = await chromium.launch();
+    const pdfPage = await browser.newPage();
+    
+    await pdfPage.setContent(htmlForPdf, { 
+      waitUntil: 'networkidle' 
+    });
+
+    const pdfOptions = {
+      format: 'A4',
+      printBackground: true,
+      margin: {
+        top: headerImage ? '85px' : '20mm',
+        bottom: footerImage ? '65px' : '20mm',
+        left: '20mm',
+        right: '20mm'
+      }
+    };
+
+    if (headerImage || footerImage) {
+      pdfOptions.displayHeaderFooter = true;
+      pdfOptions.headerTemplate = headerImage 
+        ? `<div style="font-size: 0; line-height: 0; margin: 0; padding: 0; width: 210mm; margin-left: 0mm; margin-top: -5mm;"><img src="${headerImage}" style="width: 210mm; height: auto; display: block; margin: 0; padding: 0;"/></div>`
+        : '<div></div>';
+      pdfOptions.footerTemplate = footerImage 
+        ? `<div style="font-size: 0; line-height: 0; margin: 0; padding: 0; width: 210mm; margin-left: 0mm; margin-bottom: -5mm"><img src="${footerImage}" style="width: 210mm; height: auto; display: block; margin: 0; padding: 0;"/></div>`
+        : '<div></div>';
+    }
+
+    const pdfBuffer = await pdfPage.pdf(pdfOptions);
+    await browser.close();
+
+    console.log('PDF gerado com sucesso!');
+    console.log('URL recebida:', url);
+    console.log('siteName recebido:', siteName);
+    console.log('publishedDate recebido:', publishedDate);
+    
+    const filename = generatePdfFilename(url || siteName, publishedDate);
+    console.log('Filename final:', filename);
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(pdfBuffer);
+
+  } catch (error) {
+    console.error('Erro ao gerar PDF:', error.message);
+    res.status(500).json({ 
+      error: 'Erro ao gerar PDF. Tente novamente.' 
+    });
+  }
+});
+
 // Endpoint para gerar PDF (modo manual com upload de imagens)
 app.post('/generate-pdf-manual', upload.array('images'), async (req, res) => {
   const { url, customerPath } = req.body;
   let { title } = req.body;
   const images = req.files;
 
-  if (!url) {
-    return res.status(400).json({ error: 'URL é obrigatória' });
-  }
-
   if (!images || images.length === 0) {
     return res.status(400).json({ error: 'Pelo menos uma imagem é necessária' });
-  }
-
-  // Se título não for fornecido, usar "Notícia" como padrão
-  if (!title || !title.trim()) {
-    title = 'Notícia';
   }
 
   try {
@@ -793,7 +1065,7 @@ app.post('/generate-pdf-manual', upload.array('images'), async (req, res) => {
 
     // Criar HTML com as imagens
     const imagesHtml = imageDataUrls.map((dataUrl, index) => 
-      `<img src="${dataUrl}" style="width: 100%; height: auto; margin: 30px 0; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); display: block;" alt="Imagem ${index + 1}" />`
+      `<img src="${dataUrl}" alt="Imagem ${index + 1}" />`
     ).join('\n');
 
     const htmlContent = `
@@ -815,35 +1087,60 @@ app.post('/generate-pdf-manual', upload.array('images'), async (req, res) => {
       line-height: 1.8;
       color: #333;
       background: #fff;
-      padding: 20px 40px;
+      padding: 0;
     }
     
     .article-header {
-      margin-bottom: 40px;
-      padding-bottom: 20px;
+      margin-bottom: 20px;
+      padding: 20px 40px 15px 40px;
       border-bottom: 3px solid #2563eb;
       text-align: center;
+      page-break-after: avoid;
     }
     
     h1 {
       font-size: 28px;
       font-weight: 700;
       color: #1e293b;
-      margin-bottom: 16px;
+      margin-bottom: 0;
       line-height: 1.3;
+      page-break-after: avoid;
     }
     
     .images-container {
-      margin: 40px 0;
+      padding: 0 40px;
+      page-break-before: avoid;
+    }
+    
+    .images-container img {
+      width: 100%;
+      max-width: 100%;
+      max-height: 230mm;
+      height: auto;
+      margin: 15px 0;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      display: block;
+      object-fit: contain;
+      page-break-inside: avoid;
+    }
+    
+    .images-container img:first-child {
+      margin-top: 0;
+    }
+    
+    .images-container img:last-child {
+      margin-bottom: 0;
     }
     
     .article-footer {
-      margin-top: 60px;
-      padding-top: 30px;
+      margin-top: 30px;
+      padding: 20px 40px;
       border-top: 2px solid #e2e8f0;
       font-size: 14px;
       color: #64748b;
       text-align: center;
+      page-break-before: avoid;
     }
     
     .source-link {
@@ -862,18 +1159,18 @@ app.post('/generate-pdf-manual', upload.array('images'), async (req, res) => {
   </style>
 </head>
 <body>
-    <header class="article-header">
+    ${title && title.trim() ? `<header class="article-header">
       <h1>${title}</h1>
-    </header>
+    </header>` : ''}
     
     <div class="images-container">
       ${imagesHtml}
     </div>
-    
+    ${url ? `
     <footer class="article-footer">
       <p><strong>Fonte original:</strong></p>
       <a href="${url}" class="source-link">${url}</a>
-    </footer>
+    </footer>` : ''}
 </body>
 </html>
     `.trim();
@@ -914,8 +1211,9 @@ app.post('/generate-pdf-manual', upload.array('images'), async (req, res) => {
 
     // Enviar PDF
     console.log('PDF gerado com sucesso!');
+    const filename = generatePdfFilename(url || 'manual', null); // No modo manual não temos data de publicação
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', 'attachment; filename=noticia.pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(pdfBuffer);
 
   } catch (error) {

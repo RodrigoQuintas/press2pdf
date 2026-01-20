@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import CustomerManager from './components/CustomerManager';
 import ImageUploader from './components/ImageUploader';
+import ArticleEditor from './components/ArticleEditor';
 
 function App() {
   const [currentPage, setCurrentPage] = useState('pdf'); // 'pdf' or 'customers'
@@ -14,6 +15,10 @@ function App() {
   const [extractionMode, setExtractionMode] = useState('automatic'); // 'automatic' or 'manual'
   const [images, setImages] = useState([]);
   const [manualTitle, setManualTitle] = useState('');
+  const [editMode, setEditMode] = useState(true); // Novo: modo de edição (ATIVADO POR PADRÃO)
+  const [extractedArticle, setExtractedArticle] = useState(null); // Novo: artigo extraído
+  const [editedContent, setEditedContent] = useState(''); // Novo: conteúdo editado
+  const [pdfFilename, setPdfFilename] = useState(''); // Nome do arquivo PDF
   
   useEffect(() => {
     loadCustomers();
@@ -50,7 +55,7 @@ function App() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    if (!url.trim()) {
+    if (extractionMode === 'automatic' && !url.trim()) {
       setError('Por favor, insira uma URL válida');
       return;
     }
@@ -67,30 +72,48 @@ function App() {
 
     try {
       if (extractionMode === 'automatic') {
-        // Fluxo automático com Playwright
-        const response = await fetch('http://localhost:3000/generate-pdf', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ 
-            url,
-            customerPath: selectedCustomer || null
-          }),
-        });
+        if (editMode) {
+          // Novo fluxo: extrair conteúdo para edição
+          const response = await fetch('http://localhost:3000/extract-content', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ url }),
+          });
 
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || 'Erro ao gerar PDF');
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Erro ao extrair conteúdo');
+          }
+
+          const article = await response.json();
+          setExtractedArticle({ ...article, url });
+          setEditedContent(article.content);
+        } else {
+          // Fluxo direto sem edição
+          const response = await fetch('http://localhost:3000/generate-pdf', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ 
+              url,
+              customerPath: selectedCustomer || null
+            }),
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Erro ao gerar PDF');
+          }
+
+          const blob = await response.blob();
+          const blobUrl = window.URL.createObjectURL(blob);
+          setPdfUrl(blobUrl);
+          setMotivationalMessage(getRandomMessage());
+          setUrl('');
         }
-
-        // Converter resposta em blob
-        const blob = await response.blob();
-        
-        // Criar URL temporária para visualização
-        const blobUrl = window.URL.createObjectURL(blob);
-        setPdfUrl(blobUrl);
-        setMotivationalMessage(getRandomMessage());
       } else {
         // Fluxo manual com upload de imagens
         const formData = new FormData();
@@ -112,10 +135,7 @@ function App() {
           throw new Error(errorData.error || 'Erro ao gerar PDF');
         }
 
-        // Converter resposta em blob
         const blob = await response.blob();
-        
-        // Criar URL temporária para visualização
         setManualTitle('');
         const blobUrl = window.URL.createObjectURL(blob);
         setPdfUrl(blobUrl);
@@ -124,9 +144,8 @@ function App() {
         // Limpar imagens após sucesso
         images.forEach(img => URL.revokeObjectURL(img.preview));
         setImages([]);
+        setUrl('');
       }
-
-      setUrl('');
     } catch (err) {
       setError(err.message || 'Erro ao processar a notícia');
     } finally {
@@ -134,12 +153,82 @@ function App() {
     }
   };
 
+  const handleGeneratePdfFromEditor = async () => {
+    if (!extractedArticle || !editedContent) {
+      setError('Nenhum conteúdo disponível para gerar PDF');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      const response = await fetch('http://localhost:3000/generate-pdf-from-content', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          content: editedContent,
+          title: extractedArticle.title,
+          byline: extractedArticle.byline,
+          publishedDate: extractedArticle.publishedDate,
+          siteName: extractedArticle.siteName,
+          url: extractedArticle.url,
+          customerPath: selectedCustomer || null
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Erro ao gerar PDF');
+      }
+
+      // Pegar nome do arquivo do header Content-Disposition
+      const contentDisposition = response.headers.get('Content-Disposition');
+      console.log('Content-Disposition header:', contentDisposition);
+      
+      let filename = 'article.pdf';
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+        if (filenameMatch && filenameMatch[1]) {
+          filename = filenameMatch[1].replace(/['"]/g, '');
+        }
+      }
+      console.log('Filename extraído:', filename);
+
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      setPdfUrl(blobUrl);
+      
+      // Armazenar nome do arquivo para uso no download
+      setPdfFilename(filename);
+      
+      setMotivationalMessage(getRandomMessage());
+      
+      // Limpar estado do editor
+      setExtractedArticle(null);
+      setEditedContent('');
+      setUrl('');
+    } catch (err) {
+      setError(err.message || 'Erro ao gerar PDF');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setExtractedArticle(null);
+    setEditedContent('');
+    setLoading(false);
+  };
+
   const handleDownload = () => {
     if (!pdfUrl) return;
     
     const link = document.createElement('a');
     link.href = pdfUrl;
-    link.download = 'noticia.pdf';
+    link.download = pdfFilename || 'noticia.pdf';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -159,7 +248,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-2xl">
+      <div className={`bg-white rounded-2xl shadow-2xl p-8 w-full ${extractedArticle ? 'max-w-6xl' : 'max-w-2xl'} transition-all duration-300`}>
         {/* Navigation */}
         <div className="flex justify-end mb-4">
           <button
@@ -238,6 +327,23 @@ function App() {
             </div>
           </div>
 
+          {/* Toggle para modo de edição (apenas no automático) */}
+          {extractionMode === 'automatic' && (
+            <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-lg">
+              <input
+                type="checkbox"
+                id="editMode"
+                checked={editMode}
+                onChange={(e) => setEditMode(e.target.checked)}
+                className="w-4 h-4 text-blue-600 focus:ring-blue-500 rounded"
+                disabled={loading}
+              />
+              <label htmlFor="editMode" className="text-sm font-medium text-gray-700 cursor-pointer">
+                ✏️ Permitir edição do conteúdo antes de gerar PDF
+              </label>
+            </div>
+          )}
+
           {/* Título da Notícia (apenas no modo manual) */}
           {extractionMode === 'manual' && (
             <div>
@@ -303,13 +409,49 @@ function App() {
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
-                Gerando PDF...
+                {editMode ? 'Extraindo conteúdo...' : 'Gerando PDF...'}
               </span>
             ) : (
-              'Gerar PDF'
+              editMode ? '✏️ Extrair e Editar' : '📄 Gerar PDF'
             )}
           </button>
         </form>
+
+        {/* Editor de Conteúdo */}
+        {extractedArticle && (
+          <div className="mt-8 border-t pt-8">
+            <div className="mb-4 flex justify-between items-center">
+              <h2 className="text-2xl font-bold text-gray-800">
+                ✏️ Editar Conteúdo
+              </h2>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleGeneratePdfFromEditor}
+                  disabled={loading}
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition duration-200 disabled:opacity-50"
+                >
+                  {loading ? 'Gerando...' : '📄 Gerar PDF'}
+                </button>
+                <button
+                  onClick={handleCancelEdit}
+                  className="bg-gray-600 hover:bg-gray-700 text-white font-medium py-2 px-4 rounded-lg transition duration-200"
+                >
+                  ✖️ Cancelar
+                </button>
+              </div>
+            </div>
+            <ArticleEditor
+              initialContent={extractedArticle.content}
+              onContentChange={setEditedContent}
+              articleMetadata={{
+                title: extractedArticle.title,
+                byline: extractedArticle.byline,
+                publishedDate: extractedArticle.publishedDate
+              }}
+              onMetadataChange={(newMetadata) => setExtractedArticle({ ...extractedArticle, ...newMetadata })}
+            />
+          </div>
+        )}
 
         {pdfUrl && (
           <div className="mt-6 border-t pt-6">

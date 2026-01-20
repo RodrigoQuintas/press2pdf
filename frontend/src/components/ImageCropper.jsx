@@ -74,12 +74,13 @@ const ImageCropper = ({ image, onCropComplete, aspectRatio, targetWidth, targetH
           <input
             type="range"
             value={zoom}
-            min={1}
+            min={0.5}
             max={3}
             step={0.1}
             onChange={(e) => setZoom(e.target.value)}
             className="flex-1"
           />
+          <span className="text-sm text-gray-600 min-w-[3rem]">{zoom}x</span>
         </div>
         <div className="text-sm text-gray-600">
           Dimensão final: {targetWidth} × {targetHeight}px
