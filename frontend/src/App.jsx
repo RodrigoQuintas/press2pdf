@@ -232,6 +232,11 @@ function App() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    
+    // Recarregar a página após 1 segundo
+    setTimeout(() => {
+      window.location.reload();
+    }, 1000);
   };
 
   const handleClose = () => {
